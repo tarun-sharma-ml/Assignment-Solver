@@ -1,0 +1,30 @@
+# Header written automatically on every generated assignment
+student:
+  name: "Tarun Sharma"
+  email: "ts628407@gmail.com"
+
+# Local model served by Ollama (https://ollama.com)
+model:
+  name: "assignment-solver"        # your fine-tuned model once imported (see README)
+  fallback: "qwen2.5:3b-instruct"  # used until you have fine-tuned (baseline mode)
+  host: "http://localhost:11434"
+  temperature: 0.3
+  num_ctx: 6144
+  num_predict: 1800
+  timeout_seconds: 900
+
+# Retrieval of your own earlier answers (few-shot examples)
+retrieval:
+  top_k: 2
+  max_example_chars: 3500
+
+# Run the Python code the model writes and paste REAL output/figures
+code_execution:
+  enabled: true
+  timeout_seconds: 60
+
+paths:
+  raw_assignments: "data/raw_assignments"
+  dataset: "data/processed/train.jsonl"
+  index: "data/processed/index.joblib"
+  outputs: "outputs"

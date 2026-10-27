@@ -1,0 +1,5 @@
+# After fine-tuning:  ollama create assignment-solver -f models/Modelfile
+# Point FROM at the GGUF file downloaded from Colab.
+FROM ./assignment-solver-q4_k_m.gguf
+PARAMETER temperature 0.3
+PARAMETER num_ctx 6144

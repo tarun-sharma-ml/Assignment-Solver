@@ -1,0 +1,22 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+
+# Your private data and models (keep them off GitHub)
+data/raw_assignments/*
+data/processed/*
+data/inputs/*
+outputs/*
+models/*
+!**/.gitkeep
+!models/Modelfile
+
+.ipynb_checkpoints/
+.DS_Store
+.idea/
+.vscode/
