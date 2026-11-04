@@ -32,7 +32,7 @@ OUTPUT FORMAT (strict, Markdown only):
 """
 
 
-def user_prompt(question: str, marks: int, kind: str) -> str:
+def user_prompt(question: str, marks: int, kind: str, examples_text: str = "") -> str:
     words, extras = DEPTH[depth_for(marks)]
     if kind == "practical":
         guide = (
@@ -44,7 +44,15 @@ def user_prompt(question: str, marks: int, kind: str) -> str:
             f"This is a theory question worth {marks} marks. Target length: {words}. "
             f"Include {extras}. Cover every part the question asks for."
         )
-    return f"Question ({marks} marks):\n{question}\n\n{guide}"
+    shots = ""
+    if examples_text:
+        shots = (
+            "Below are answers the student wrote earlier. They show the depth, structure, tone, table "
+            "style and formatting the student's course expects. MATCH THEIR STYLE for the new question. "
+            "Do not copy their content unless it is genuinely relevant, and ignore any output they show "
+            "(real output is inserted by the system).\n\n" + examples_text + "\n\n=== NEW QUESTION ===\n"
+        )
+    return f"{shots}Question ({marks} marks):\n{question}\n\n{guide}"
 
 
 def fix_prompt(error: str) -> str:

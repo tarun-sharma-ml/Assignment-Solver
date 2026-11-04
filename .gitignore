@@ -6,3 +6,5 @@ venv/
 .cache/
 output/
 *.docx
+examples/*.pdf
+solve/

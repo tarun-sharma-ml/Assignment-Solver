@@ -11,8 +11,8 @@ from .prompts import fix_prompt, user_prompt
 CACHE_DIR = Path(".cache")
 
 
-def _key(model, q: Question, marks, run_code):
-    raw = f"{model}|{marks}|{q.kind}|{run_code}|{q.text}"
+def _key(model, q: Question, marks, run_code, shots=""):
+    raw = f"{model}|{marks}|{q.kind}|{run_code}|{q.text}|{shots}"
     return hashlib.sha256(raw.encode()).hexdigest()[:20]
 
 
@@ -46,14 +46,15 @@ def annotate_with_output(blocks, fig_dir: Path):
     return out, error
 
 
-def solve_question(client, q: Question, marks: int, run_code=True, max_fix=2, out_dir=Path("output")):
+def solve_question(client, q: Question, marks: int, run_code=True, max_fix=2, out_dir=Path("output"),
+                   examples_text: str = ""):
     CACHE_DIR.mkdir(exist_ok=True)
-    cache_file = CACHE_DIR / f"{_key(client.model, q, marks, run_code)}.json"
+    cache_file = CACHE_DIR / f"{_key(client.model, q, marks, run_code, examples_text)}.json"
     if cache_file.exists():
         print("      (cached)")
         return _load(json.loads(cache_file.read_text(encoding="utf-8")))
 
-    messages = [{"role": "user", "content": user_prompt(q.text, marks, q.kind)}]
+    messages = [{"role": "user", "content": user_prompt(q.text, marks, q.kind, examples_text)}]
     md = client.complete(messages)
     blocks = parse_markdown(md)
     fig_dir = out_dir / "figures" / f"q{q.number}"

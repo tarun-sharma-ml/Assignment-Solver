@@ -35,11 +35,27 @@ python main.py assignment.pdf --dry-run                 # test everything withou
 Answers are cached in `.cache/`, so re-running after an interruption does not re-bill finished questions.
 Delete `.cache/` to regenerate. The document is saved after every question.
 
+## Learning from your own assignments
+No training needed. Put your solved assignments (`.docx`, `.pdf`, `.md`, `.txt`; each with
+"Question N: ... Answer: ..." pairs) in the `examples/` folder. For every new question the solver finds the
+most similar past answers (TF-IDF similarity) and shows them to Gemini, so new answers copy your depth,
+structure, table style and tone.
+```bash
+python main.py x --list-examples                 # check what was learned
+python main.py assignment.pdf                    # uses examples/ automatically (2 per question)
+python main.py assignment.pdf --shots 3          # show 3 similar answers; --shots 0 turns it off
+python main.py assignment.pdf --examples my_old_work/
+```
+Tips: use your best, highest-graded work; more varied examples = better matches; after you correct a
+generated answer, save the corrected document into `examples/` so the next run improves.
+This teaches *style and format*, not new knowledge, and it cannot fix wrong examples.
+
 ## Project layout
 ```
 main.py                  CLI
 solver/pdf_parser.py     question extraction (Question N:, 1., and auto-numbered lists)
 solver/prompts.py        system/user prompts, depth by marks
+solver/examples.py       learns from your solved assignments (few-shot retrieval)
 solver/llm.py            Gemini client (+ mock)
 solver/blocks.py         Markdown -> typed blocks
 solver/code_runner.py    runs Python snippets, captures stdout and matplotlib figures

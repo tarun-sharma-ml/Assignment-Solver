@@ -14,6 +14,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from solver.docx_builder import AnswerDocument
+from solver.examples import ExampleIndex, format_examples, load_examples
 from solver.llm import GeminiClient, MockClient
 from solver.pdf_parser import load_questions
 from solver.pipeline import solve_question
@@ -45,9 +46,22 @@ def main():
     ap.add_argument("--model", default=None, help="Gemini model id (default: GEMINI_MODEL env or gemini-3.5-flash-lite)")
     ap.add_argument("--no-run-code", action="store_true", help="do not execute generated Python code")
     ap.add_argument("--max-fix", type=int, default=2, help="max auto-fix attempts for failing code")
+    ap.add_argument("--examples", default="examples", help="folder with your solved assignments to learn style from")
+    ap.add_argument("--shots", type=int, default=2, help="how many similar past answers to show the model (0 = off)")
+    ap.add_argument("--list-examples", action="store_true", help="show what was learned from the examples folder and exit")
     ap.add_argument("--list", action="store_true", help="only list the parsed questions and exit")
     ap.add_argument("--dry-run", action="store_true", help="use a mock model (no API key, no cost)")
     args = ap.parse_args()
+
+    learned = load_examples(args.examples) if args.shots > 0 or args.list_examples else []
+    if args.list_examples:
+        print(f"Learned {len(learned)} solved question(s) from '{args.examples}/':")
+        for e in learned:
+            print(f"  [{e.source}] {e.question[:90]}  ({len(e.answer)} chars)")
+        return
+    index = ExampleIndex(learned) if learned and args.shots > 0 else None
+    if index:
+        print(f"Learning from {len(learned)} solved question(s) in '{args.examples}/' (using {args.shots} per question).")
 
     questions, detected = load_questions(args.input)
     marks = args.marks or detected
@@ -74,8 +88,9 @@ def main():
     for i, q in enumerate(questions, 1):
         print(f"[{i}/{len(questions)}] Q{q.number} ({q.kind})")
         try:
-            blocks = solve_question(client, q, marks, run_code=run_code,
-                                    max_fix=args.max_fix, out_dir=out_path.parent)
+            shots = format_examples(index.retrieve(q.text, k=args.shots)) if index else ""
+            blocks = solve_question(client, q, marks, run_code=run_code, max_fix=args.max_fix,
+                                    out_dir=out_path.parent, examples_text=shots)
         except Exception as e:                       # keep going; one failure must not lose the rest
             print(f"      FAILED: {type(e).__name__}: {e}")
             continue
