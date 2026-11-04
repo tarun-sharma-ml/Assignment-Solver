@@ -1,88 +1,64 @@
-# assignment-solver
+# Assignment Solver
 
-Give it an assignment (PDF, DOCX, photo, screenshot, text) and it writes a solved `.docx`
-that follows **your** template, using an AI model that **you** fine-tune on **your** earlier
-assignments. No paid or hosted AI is used: everything runs locally through [Ollama](https://ollama.com).
+Turns an assignment PDF into a formatted Word document of answers using Google Gemini (default model `gemini-3.5-flash-lite`).
 
-```
-input (pdf / docx / image / txt)
-  1. extract text           PyMuPDF, python-docx, Tesseract OCR
-  2. split into questions   regex
-  3. retrieve similar past answers of yours (TF-IDF)
-  4. local model writes the answer as JSON blocks
-  5. generated Python is really executed -> real output and plots
-  6. python-docx renders the blocks into your template
-```
+**Pipeline:** PDF -> parse questions -> Gemini writes each answer (tables, examples) ->
+generated Python code is **executed** and the *real* output and plots are inserted ->
+failing code is sent back to Gemini to fix -> `.docx` (Times New Roman 12 for text,
+Courier New 10 for code and output).
 
-The model never writes the `.docx`. It only produces JSON "blocks" (paragraph, table, bullets,
-code, example ...). A normal Python renderer builds the formatting, so the template is identical every time.
-
-## Install
-
+## Setup
 ```bash
-python -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
-pip install -e .[dev]
+python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+cp .env.example .env                                    # then put your GEMINI_API_KEY in .env
 ```
+If the assignment has practical questions, also install what the generated code may use, e.g.
+`pip install numpy pandas matplotlib scikit-learn seaborn`.
 
-Also install: **Tesseract** (only for photos/scanned PDFs; see its install page) and **Ollama**.
-Edit `config.yaml` (your name and email go in the header automatically).
-
-## Quick start (before you have trained anything)
-
+## Usage
 ```bash
-ollama pull qwen2.5:3b-instruct
-assignment-solver build-dataset                       # reads .docx and .pdf files in data/raw_assignments/
-assignment-solver questions data/inputs/hw.pdf        # check how the file is split (no AI)
-assignment-solver solve data/inputs/hw.pdf -t "Assignment name"
+python main.py assignment.pdf --list                    # check the parsed questions first
+python main.py assignment.pdf --marks 20 --name "Your Name"
+python main.py assignment.pdf --only 1,3,6-8 --marks 10 --out answers.docx
+python main.py assignment.pdf --no-run-code             # do not execute code
+python main.py assignment.pdf --dry-run                 # test everything without an API key
+```
+| Option | Meaning |
+|---|---|
+| `--marks N` | Marks per question; controls answer depth (<=5 short, <=10 medium, else long). Auto-detected from "Each question carries N marks" |
+| `--only 1,3,6-8` | Solve only some questions |
+| `--model ID` | Gemini model id (or set `GEMINI_MODEL`) |
+| `--max-fix N` | Auto-fix attempts for code that fails (default 2) |
+| `--dry-run` | Mock model; checks parsing and Word export for free |
+
+Answers are cached in `.cache/`, so re-running after an interruption does not re-bill finished questions.
+Delete `.cache/` to regenerate. The document is saved after every question.
+
+## Project layout
+```
+main.py                  CLI
+solver/pdf_parser.py     question extraction (Question N:, 1., and auto-numbered lists)
+solver/prompts.py        system/user prompts, depth by marks
+solver/llm.py            Gemini client (+ mock)
+solver/blocks.py         Markdown -> typed blocks
+solver/code_runner.py    runs Python snippets, captures stdout and matplotlib figures
+solver/pipeline.py       per-question solve / run / fix / cache loop
+solver/docx_builder.py   Word export
 ```
 
-Without a fine-tuned model it uses the fallback model plus retrieval of your similar answers
-(few-shot). That already gives a decent first draft.
+## Security
+`--run-code` (default) **executes model-generated Python on your computer**. A deny-list blocks
+obvious dangers (`subprocess`, `os.system`, file deletion, network calls, `eval`), but it is not a
+sandbox. For anything beyond your own homework, run the project inside Docker, or use `--no-run-code`.
+Never commit `.env`.
 
-## How to train your own model (the learning part)
-
-**Why this works.** A language model is a text predictor. Fine-tuning shows it many
-`question -> answer in your style` pairs until it copies your structure and tone. **LoRA** trains
-a small add-on (about 1% of the weights) instead of the whole model, so a free GPU is enough.
-
-1. **Build the dataset.** Put your finished `.docx` or `.pdf` assignments in `data/raw_assignments/`
-   (use the same layout as the templates: `Question N:` ... `Answer:`). PDFs are read as plain text,
-   so their answers become paragraph blocks. Scanned PDFs require Tesseract. Run
-   `assignment-solver build-dataset`. Each question becomes a row in `data/processed/train.jsonl`.
-   Open the file and read a few rows: if a row looks wrong, fix the source docx, not the JSON.
-   20 pairs is enough to test; **150-300 pairs (15-30 assignments) gives a good model.**
-2. **Train on Colab.** Push this repo to GitHub (your data stays private because it is gitignored),
-   open `notebooks/finetune_colab.ipynb` in Google Colab with a **T4 GPU**, set `REPO_URL`,
-   upload `train.jsonl`, run all cells. Defaults: Qwen2.5-3B, 3 epochs, lr 2e-4, rank 16.
-   Many answers are long, so keep `--max-seq 4096`; if Colab runs out of memory use a 1.5B model.
-3. **Run it locally.** Download the `.gguf`, put it in `models/`, make `models/Modelfile` point to it, then:
-   ```bash
-   ollama create assignment-solver -f models/Modelfile
-   ```
-   `config.yaml` already uses the name `assignment-solver`; the tool prefers it over the fallback.
-4. **Improve over time.** Fix every answer the tool gets wrong, save the corrected `.docx` into
-   `data/raw_assignments/`, rebuild the dataset and retrain. Each fix becomes new training data.
-
-## Things to know
-
-- **Always read the output.** Small models make factual mistakes. The tool prints warnings
-  (invalid JSON, code that failed, missing example) under "Check these before submitting".
-- **Code is executed** in a temp folder with a timeout, so the output and plots in the document are real.
-  It is not a hard sandbox: read the generated code, or use `--no-run`. Code needing libraries you
-  have not installed (for example TensorFlow) will fail and its output is left out with a warning.
-- Output text can be checked for similarity by your institution; use this as a first draft and learn from it.
-
-## Layout
-
-```
-src/assignment_solver/
-  ingest/      pdf, docx, image OCR readers
-  parsing/     question splitter
-  training/    docx_to_blocks.py, build_dataset.py, finetune.py
-  retrieval/   TF-IDF index of your past questions
-  generate/    prompt.py, llm.py (Ollama), solver.py, code_runner.py
-  render/      docx_builder.py (replicates the template)
-notebooks/finetune_colab.ipynb    scripts/solve.py    tests/
-```
-
-Run tests with `pytest`.
+## Limitations (read before submitting anything)
+- Not executed or tested in this environment: the live Gemini call. Everything else (parsing, code
+  execution, auto-fix loop, figures, Word export) was tested with the mock/scripted models.
+- Code is only verified to *run*, not to be the best solution. Docker, FastAPI and other non-Python
+  snippets are shown but not executed.
+- PDF parsing is heuristic. Always run `--list` first; if the PDF is scanned (images) it needs OCR
+  first, or pass a `.txt` file with numbered questions.
+- Model answers can contain mistakes. Read, verify and understand them, and follow your
+  institution's rules on AI assistance.

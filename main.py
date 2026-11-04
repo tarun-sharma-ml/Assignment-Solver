@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""Assignment Solver: assignment PDF -> answers (Gemini) -> formatted Word document.
+
+Examples:
+  python main.py assignment.pdf --list                    # only show the parsed questions
+  python main.py assignment.pdf --marks 20 --out answers.docx
+  python main.py assignment.pdf --only 1,3,6-8 --marks 10
+  python main.py assignment.pdf --dry-run                 # test the pipeline without an API key
+"""
+import argparse
+import sys
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+from solver.docx_builder import AnswerDocument
+from solver.llm import GeminiClient, MockClient
+from solver.pdf_parser import load_questions
+from solver.pipeline import solve_question
+
+
+def parse_only(spec: str | None, available: set[int]) -> set[int]:
+    if not spec:
+        return available
+    chosen = set()
+    for part in spec.split(","):
+        part = part.strip()
+        if "-" in part:
+            a, b = part.split("-", 1)
+            chosen.update(range(int(a), int(b) + 1))
+        elif part:
+            chosen.add(int(part))
+    return chosen & available
+
+
+def main():
+    load_dotenv()
+    ap = argparse.ArgumentParser(description="Solve assignment questions and export a Word document.")
+    ap.add_argument("input", help="assignment .pdf (or .txt with numbered questions)")
+    ap.add_argument("--out", default=None, help="output .docx (default: output/<input name>_answers.docx)")
+    ap.add_argument("--marks", type=int, default=None, help="marks per question (auto-detected from the PDF if omitted)")
+    ap.add_argument("--only", default=None, help="solve only these questions, e.g. 1,3,6-8")
+    ap.add_argument("--title", default=None, help="document title")
+    ap.add_argument("--name", default="", help="student name to show on the first page")
+    ap.add_argument("--model", default=None, help="Gemini model id (default: GEMINI_MODEL env or gemini-3.5-flash-lite)")
+    ap.add_argument("--no-run-code", action="store_true", help="do not execute generated Python code")
+    ap.add_argument("--max-fix", type=int, default=2, help="max auto-fix attempts for failing code")
+    ap.add_argument("--list", action="store_true", help="only list the parsed questions and exit")
+    ap.add_argument("--dry-run", action="store_true", help="use a mock model (no API key, no cost)")
+    args = ap.parse_args()
+
+    questions, detected = load_questions(args.input)
+    marks = args.marks or detected
+    selected = parse_only(args.only, {q.number for q in questions})
+    questions = [q for q in questions if q.number in selected]
+
+    print(f"Found {len(questions)} question(s), {marks} marks each "
+          f"({sum(q.kind == 'practical' for q in questions)} practical).")
+    if args.list:
+        for q in questions:
+            print(f"  Q{q.number:<3} [{q.kind:<9}] {q.text[:100]}")
+        return
+
+    client = MockClient() if args.dry_run else GeminiClient(model=args.model)
+    run_code = not args.no_run_code
+    if run_code:
+        print("Note: generated Python code will be executed locally (see README, Security).")
+
+    stem = Path(args.input).stem
+    out_path = Path(args.out) if args.out else Path("output") / f"{stem}_answers.docx"
+    doc = AnswerDocument(title=args.title or f"{stem.replace('_', ' ')} - Solutions",
+                         subtitle=f"Each question carries {marks} marks", student=args.name)
+
+    for i, q in enumerate(questions, 1):
+        print(f"[{i}/{len(questions)}] Q{q.number} ({q.kind})")
+        try:
+            blocks = solve_question(client, q, marks, run_code=run_code,
+                                    max_fix=args.max_fix, out_dir=out_path.parent)
+        except Exception as e:                       # keep going; one failure must not lose the rest
+            print(f"      FAILED: {type(e).__name__}: {e}")
+            continue
+        doc.add_question(q.number, q.text)
+        doc.add_blocks(blocks)
+        doc.save(out_path)                           # save after every question (crash-safe)
+
+    doc.save(out_path)
+    print(f"\nDone. Saved: {out_path}")
+
+
+if __name__ == "__main__":
+    sys.exit(main())
