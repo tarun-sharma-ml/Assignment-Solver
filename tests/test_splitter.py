@@ -9,7 +9,11 @@ def test_numbered_questions():
 
 def test_inner_list_not_split():
     text = "1. Write code that does:\n  1. step\n  2. step\n2. Explain."
-    assert len(split_questions(text)) == 2
+    qs = split_questions(text)
+    assert len(qs) == 2
+    assert qs[0].startswith("Write code that does:")
+    assert "1. step" in qs[0] and "2. step" in qs[0]
+    assert qs[1] == "Explain."
 
 
 def test_no_numbering():

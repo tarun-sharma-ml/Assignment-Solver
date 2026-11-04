@@ -3,15 +3,13 @@ from __future__ import annotations
 
 import re
 
-# "Question 1:", "Q1.", "Q.2)", "1.", "2)", "(3)" at the start of a line.
-_START = re.compile(
-    r"^\s*(?:"
-    r"(?:question|ques|q)\s*\.?\s*(?P<n1>\d{1,3})\s*[:.)\-–]?"
-    r"|(?P<n2>\d{1,3})\s*[.)]"
-    r"|\((?P<n3>\d{1,3})\)"
-    r")\s*",
+# "Question 1:", "Q1.", "Q.2)" and top-level numbered items like "1.", "2)", "(3)".
+# Nested list markers such as "  2." are intentionally ignored so they don't split a question.
+_QUESTION_START = re.compile(
+    r"^\s*(?:question|ques|q)\s*\.?\s*(?P<n1>\d{1,3})\s*[:.)\-–]?\s*",
     re.IGNORECASE,
 )
+_BARE_START = re.compile(r"^(?P<n2>\d{1,3})\s*[.)]|^\((?P<n3>\d{1,3})\)", re.IGNORECASE)
 
 
 def _clean(text: str) -> str:
@@ -32,10 +30,14 @@ def split_questions(text: str) -> list[str]:
     starts: list[tuple[int, int, int]] = []
     expected = 1
     for idx, line in enumerate(lines):
-        m = _START.match(line)
-        if not m:
+        m = _QUESTION_START.match(line)
+        if m:
+            number = int(m.group("n1"))
+        elif line and not line[0].isspace() and (m := _BARE_START.match(line)):
+            number = int(m.group("n2") or m.group("n3"))
+        else:
             continue
-        number = int(m.group("n1") or m.group("n2") or m.group("n3"))
+
         if number == expected or (not starts and number in (0, 1)):
             starts.append((idx, number, m.end()))
             expected = number + 1
@@ -52,11 +54,5 @@ def split_questions(text: str) -> list[str]:
         question = re.sub(r"\s*Answer\s*:?\s*$", "", question, flags=re.I).strip()
         if question:
             questions.append(question)
-    
-    if questions:
-        last = questions[-1].split("\n")
-        while len(lines) > 1 and len(lines[-1].split()) <= 3 and not re.search(r"[.?:)]$", lines[-1].strip()):
-            lines.pop()
-        questions[-1] = "\n".join(last).strip()
-    
+
     return questions

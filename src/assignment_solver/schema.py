@@ -9,7 +9,7 @@ An answer is a list of *blocks*. Each block is a dict with a ``type``:
     code      : {"type": "code",      "text": str}               # code the student would run
     output    : {"type": "output",    "text": str}               # program output (monospace)
     figure    : {"type": "figure",    "caption": str, "path": str (optional, filled by runner)}
-    example   : {"type": "example",   "text": str}               # "Example: ..." paragraph
+    example   : {"type": "example",   "text": str}               # optional worked example paragraph
 """
 from __future__ import annotations
 
@@ -28,8 +28,11 @@ Each block is one of:
 {"type":"heading","text":"Python Code:"}     label placed right before a code block
 {"type":"code","text":"python source"}       complete runnable code (never include its output)
 {"type":"figure","caption":"Figure: ..."}    only if the code draws a plot
-{"type":"example","text":"..."}              a short worked example, always last
-Start with an introductory paragraph, use tables for comparisons, bullets for lists, and finish with an example."""
+{"type":"example","text":"..."}              a worked example when the question asks for one or it materially helps
+Use separate blocks for distinct parts of a multi-part answer rather than one long paragraph. Use tables for
+comparisons, bullets for lists, and code blocks for requested SQL or programming code. Do not force an
+introduction, conclusion, or example when it is not useful. Answer every part of the question and check
+examples, calculations, and code for correctness. Return only the blocks needed for a clear, complete answer."""
 
 
 def _clean_str(value: Any) -> str:
