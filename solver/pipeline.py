@@ -1,18 +1,37 @@
 """Solve each question: LLM answer -> parse -> run code -> (fix on failure) -> cache."""
 import hashlib
 import json
+import re
 from pathlib import Path
 
-from .blocks import Block, parse_markdown
+from .blocks import Block, parse_markdown, strip_echo
 from .code_runner import run_python
 from .pdf_parser import Question
-from .prompts import fix_prompt, user_prompt
+from .prompts import SYSTEM_PROMPT, fix_prompt, user_prompt
 
 CACHE_DIR = Path(".cache")
+CODE_ASKED = re.compile(r"\b(code|snippet|program|script|yaml|dockerfile|command|config|configuration|syntax|implement)\b", re.I)
 
 
-def _key(model, q: Question, marks, run_code, shots=""):
-    raw = f"{model}|{marks}|{q.kind}|{run_code}|{q.text}|{shots}"
+def code_not_wanted(q: Question) -> bool:
+    return q.kind == "theory" and not CODE_ASKED.search(q.text)
+
+
+def drop_code(blocks):
+    """Last resort: remove code/output/figures and any 'Example: ... following code ...' lead-in."""
+    keep = []
+    for b in blocks:
+        if b.kind in ("code", "output", "image"):
+            continue
+        if b.kind == "para" and b.text.lower().startswith("example") and re.search(r"\bcode\b", b.text, re.I):
+            continue
+        keep.append(b)
+    return keep
+
+
+def _key(model, run_code, prompt):
+    """Cache key covers the model AND the exact prompts, so editing prompts invalidates old answers."""
+    raw = f"{model}|{run_code}|{SYSTEM_PROMPT}|{prompt}"
     return hashlib.sha256(raw.encode()).hexdigest()[:20]
 
 
@@ -49,15 +68,26 @@ def annotate_with_output(blocks, fig_dir: Path):
 def solve_question(client, q: Question, marks: int, run_code=True, max_fix=2, out_dir=Path("output"),
                    examples_text: str = ""):
     CACHE_DIR.mkdir(exist_ok=True)
-    cache_file = CACHE_DIR / f"{_key(client.model, q, marks, run_code, examples_text)}.json"
+    prompt = user_prompt(q.text, marks, q.kind, examples_text)
+    cache_file = CACHE_DIR / f"{_key(client.model, run_code, prompt)}.json"
     if cache_file.exists():
         print("      (cached)")
         return _load(json.loads(cache_file.read_text(encoding="utf-8")))
 
-    messages = [{"role": "user", "content": user_prompt(q.text, marks, q.kind, examples_text)}]
+    messages = [{"role": "user", "content": prompt}]
     md = client.complete(messages)
-    blocks = parse_markdown(md)
+    blocks = strip_echo(parse_markdown(md), q.text)
     fig_dir = out_dir / "figures" / f"q{q.number}"
+
+    if code_not_wanted(q) and any(b.kind == "code" for b in blocks):
+        print("      theory question but the model added code; asking for a code-free rewrite")
+        messages += [{"role": "assistant", "content": md},
+                     {"role": "user", "content": "This is a theory question that does not ask for code. Rewrite the "
+                      "FULL answer with NO code blocks at all. Keep the tables and give a non-code example."}]
+        md = client.complete(messages)
+        blocks = strip_echo(parse_markdown(md), q.text)
+        if any(b.kind == "code" for b in blocks):
+            blocks = drop_code(blocks)
 
     if run_code and any(b.kind == "code" and b.lang in ("python", "py") for b in blocks):
         for attempt in range(max_fix + 1):
@@ -71,7 +101,7 @@ def solve_question(client, q: Question, marks: int, run_code=True, max_fix=2, ou
             messages += [{"role": "assistant", "content": md},
                          {"role": "user", "content": fix_prompt(error)}]
             md = client.complete(messages)
-            blocks = parse_markdown(md)
+            blocks = strip_echo(parse_markdown(md), q.text)
 
     cache_file.write_text(json.dumps(_dump(blocks)), encoding="utf-8")
     return blocks

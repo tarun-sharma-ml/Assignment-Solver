@@ -11,6 +11,7 @@ NOISE_PATTERNS = [
     r"^\s*(java \+ dsa\s*)?pwskills\s*$",    # footers
     r"^\s*answer\s*:?\s*$",                  # empty "Answer:" labels
     r"^\s*skills\s*$",                       # logo text
+    r"^\s*(none|null|nan)\s*$",              # empty-field artifacts from PDF export
 ]
 NOISE_RE = [re.compile(p, re.I) for p in NOISE_PATTERNS]
 

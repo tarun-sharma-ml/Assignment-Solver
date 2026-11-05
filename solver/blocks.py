@@ -21,6 +21,18 @@ def _cells(line: str) -> list[str]:
     return [c.strip() for c in line.strip().strip("|").split("|")]
 
 
+def _normalise_rows(rows: list[list[str]]) -> list[list[str]]:
+    """Make every row as wide as the header: pad short rows; fold extra cells (e.g. an unescaped '|')
+    into the last column. This avoids an empty extra column in the Word table."""
+    width = len(rows[0])
+    fixed = []
+    for r in rows:
+        if len(r) > width:
+            r = r[:width - 1] + [" | ".join(r[width - 1:])]
+        fixed.append(r + [""] * (width - len(r)))
+    return fixed
+
+
 def parse_markdown(md: str) -> list[Block]:
     blocks: list[Block] = []
     lines = md.replace("\r\n", "\n").split("\n")
@@ -51,7 +63,7 @@ def parse_markdown(md: str) -> list[Block]:
             while i < len(lines) and lines[i].strip().startswith("|"):
                 rows.append(_cells(lines[i]))
                 i += 1
-            blocks.append(Block("table", rows=rows))
+            blocks.append(Block("table", rows=_normalise_rows(rows)))
             continue
         m = re.match(r"^(#{1,4})\s+(.*)$", line)
         if m:
@@ -71,3 +83,24 @@ def parse_markdown(md: str) -> list[Block]:
         i += 1
     flush()
     return blocks
+
+
+def strip_echo(blocks: list[Block], question: str) -> list[Block]:
+    """Models sometimes start by repeating the question and/or writing 'Answer:'. Remove that."""
+    if not blocks or blocks[0].kind != "para":
+        return blocks
+    norm = lambda t: re.sub(r"\W+", " ", t).strip().lower()
+    text = blocks[0].text
+    q_head = norm(question)[:40]
+    changed = False
+    if q_head and norm(text).startswith(q_head):
+        m = re.search(r"(?i)\banswer\s*:\s*", text[:len(question) + 80])
+        text = text[m.end():] if m else text[len(question):]
+        changed = True
+    m2 = re.match(r"(?i)^\s*(\*\*)?answer\s*:?(\*\*)?\s*", text)
+    if m2:
+        text, changed = text[m2.end():], True
+    if not changed:
+        return blocks
+    text = text.strip()
+    return ([Block("para", text)] if text else []) + blocks[1:]

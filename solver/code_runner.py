@@ -54,7 +54,8 @@ def run_python(code: str, out_dir: Path, timeout: int = 120) -> RunResult:
     with tempfile.TemporaryDirectory() as tmp:
         script = Path(tmp) / "snippet.py"
         script.write_text(PRELUDE % {"out": str(out_dir)} + "\n" + code, encoding="utf-8")
-        env = {**os.environ, "MPLBACKEND": "Agg", "PYTHONHASHSEED": "0"}
+        env = {**os.environ, "MPLBACKEND": "Agg", "PYTHONHASHSEED": "0",
+               "MLFLOW_TRACKING_URI": "sqlite:///mlflow.db"}   # file store is unsupported in MLflow 3.x
         try:
             proc = subprocess.run([sys.executable, str(script)], capture_output=True, text=True,
                                   timeout=timeout, cwd=tmp, env=env, stdin=subprocess.DEVNULL)

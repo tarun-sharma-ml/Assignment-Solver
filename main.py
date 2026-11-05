@@ -9,6 +9,7 @@ Examples:
 """
 import argparse
 import sys
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -18,6 +19,13 @@ from solver.examples import ExampleIndex, format_examples, load_examples
 from solver.llm import GeminiClient, MockClient
 from solver.pdf_parser import load_questions
 from solver.pipeline import solve_question
+
+
+def nice_title(stem: str) -> str:
+    """'mlflow_deployment_monitoring_assignment_pdf_04112026' -> 'Mlflow Deployment Monitoring'"""
+    words = [w for w in stem.replace("-", "_").split("_")
+             if w and not w.isdigit() and w.lower() not in {"pdf", "assignment", "docx", "final"}]
+    return (" ".join(words) or stem).title()
 
 
 def parse_only(spec: str | None, available: set[int]) -> set[int]:
@@ -44,6 +52,8 @@ def main():
     ap.add_argument("--title", default=None, help="document title")
     ap.add_argument("--name", default="", help="student name to show on the first page")
     ap.add_argument("--model", default=None, help="Gemini model id (default: GEMINI_MODEL env or gemini-3.5-flash-lite)")
+    ap.add_argument("--fallback-model", default=None, help="model to use if the main one stays overloaded (e.g. gemini-3.5-flash)")
+    ap.add_argument("--delay", type=float, default=0, help="seconds to pause between questions (helps with rate limits)")
     ap.add_argument("--no-run-code", action="store_true", help="do not execute generated Python code")
     ap.add_argument("--max-fix", type=int, default=2, help="max auto-fix attempts for failing code")
     ap.add_argument("--examples", default="examples", help="folder with your solved assignments to learn style from")
@@ -75,14 +85,14 @@ def main():
             print(f"  Q{q.number:<3} [{q.kind:<9}] {q.text[:100]}")
         return
 
-    client = MockClient() if args.dry_run else GeminiClient(model=args.model)
+    client = MockClient() if args.dry_run else GeminiClient(model=args.model, fallback_model=args.fallback_model)
     run_code = not args.no_run_code
     if run_code:
         print("Note: generated Python code will be executed locally (see README, Security).")
 
     stem = Path(args.input).stem
     out_path = Path(args.out) if args.out else Path("output") / f"{stem}_answers.docx"
-    doc = AnswerDocument(title=args.title or f"{stem.replace('_', ' ')} - Solutions",
+    doc = AnswerDocument(title=args.title or f"{nice_title(stem)} - Assignment Solutions",
                          subtitle=f"Each question carries {marks} marks", student=args.name)
 
     for i, q in enumerate(questions, 1):
@@ -97,6 +107,8 @@ def main():
         doc.add_question(q.number, q.text)
         doc.add_blocks(blocks)
         doc.save(out_path)                           # save after every question (crash-safe)
+        if args.delay and i < len(questions):
+            time.sleep(args.delay)
 
     doc.save(out_path)
     print(f"\nDone. Saved: {out_path}")

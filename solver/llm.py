@@ -1,15 +1,17 @@
 """LLM access: Google Gemini (google-genai SDK), plus an offline mock for dry runs."""
 import os
+import random
 import time
 
 from .prompts import SYSTEM_PROMPT
 
 DEFAULT_MODEL = "gemini-3.5-flash-lite"
+DEFAULT_FALLBACK = "gemini-3.5-flash"        # used automatically when the main model is overloaded
 RETRY_CODES = {429, 500, 502, 503, 504}
 
 
 class GeminiClient:
-    def __init__(self, model: str | None = None, max_tokens: int = 8000):
+    def __init__(self, model: str | None = None, max_tokens: int = 8000, fallback_model: str | None = None):
         try:
             from google import genai
             from google.genai import errors, types
@@ -24,6 +26,9 @@ class GeminiClient:
         self._types, self._errors = types, errors
         self.client = genai.Client(api_key=key)
         self.model = model or os.getenv("GEMINI_MODEL", DEFAULT_MODEL)
+        self.fallback_model = fallback_model or os.getenv("GEMINI_FALLBACK_MODEL", DEFAULT_FALLBACK)
+        if self.fallback_model in ("", "none", self.model):
+            self.fallback_model = None
         self.config = types.GenerateContentConfig(
             system_instruction=SYSTEM_PROMPT,
             max_output_tokens=max_tokens,
@@ -38,24 +43,33 @@ class GeminiClient:
             for m in messages
         ]
 
-    def complete(self, messages: list[dict], retries: int = 4) -> str:
-        """messages: [{'role': 'user'|'assistant', 'content': str}, ...]"""
-        delay = 2.0
+    def _generate(self, model, messages):
+        resp = self.client.models.generate_content(
+            model=model, contents=self._contents(messages), config=self.config)
+        text = (resp.text or "").strip()
+        if not text:
+            raise RuntimeError("Gemini returned an empty response (possibly blocked by a safety filter).")
+        return text
+
+    def complete(self, messages: list[dict], retries: int = 6, switch_after: int = 3) -> str:
+        """messages: [{'role': 'user'|'assistant', 'content': str}, ...]
+        Overloaded/rate-limited calls are retried with backoff. After `switch_after` failures on the
+        main model, the less busy fallback model takes over for the remaining attempts."""
+        delay, model = 2.0, self.model
         for attempt in range(1, retries + 1):
             try:
-                resp = self.client.models.generate_content(
-                    model=self.model, contents=self._contents(messages), config=self.config)
-                text = (resp.text or "").strip()
-                if not text:
-                    raise RuntimeError("Gemini returned an empty response "
-                                       "(possibly blocked by a safety filter).")
-                return text
+                return self._generate(model, messages)
             except self._errors.APIError as e:
                 if getattr(e, "code", None) not in RETRY_CODES or attempt == retries:
                     raise
-                print(f"   transient API error ({e.code}); retry in {delay:.0f}s")
-                time.sleep(delay)
-                delay *= 2
+                if attempt == switch_after and self.fallback_model and model != self.fallback_model:
+                    model = self.fallback_model
+                    print(f"   {self.model} is overloaded; switching to {model}")
+                    continue
+                wait = delay + random.uniform(0, 1.5)
+                print(f"   transient API error ({e.code}); retry in {wait:.0f}s")
+                time.sleep(wait)
+                delay = min(delay * 2, 60)
 
 
 class MockClient:
